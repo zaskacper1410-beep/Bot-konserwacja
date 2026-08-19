@@ -1286,6 +1286,30 @@ async def id_statystyki(
 
 
 # =========================================================
+# REJESTRACJA GRUP SLASH
+# =========================================================
+# Bez tego Discord nie pokazuje /giveaway i /id.
+# Grupy są dodawane przed synchronizacją komend.
+GUILD_OBJECT = discord.Object(id=GUILD_ID)
+
+try:
+    bot.tree.add_command(
+        giveaway_group,
+        guild=GUILD_OBJECT
+    )
+except app_commands.CommandAlreadyRegistered:
+    pass
+
+try:
+    bot.tree.add_command(
+        id_group,
+        guild=GUILD_OBJECT
+    )
+except app_commands.CommandAlreadyRegistered:
+    pass
+
+
+# =========================================================
 # KONSERWACJA
 # =========================================================
 
