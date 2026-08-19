@@ -1161,7 +1161,7 @@ class MaintenanceView(discord.ui.View):
             timeout=120
         )
 
-    @discord.ui.Button(
+    @discord.ui.button(
         label="Włącz",
         style=discord.ButtonStyle.danger
     )
@@ -1301,7 +1301,7 @@ class MaintenanceView(discord.ui.View):
             ephemeral=True
         )
 
-    @discord.ui.Button(
+    @discord.ui.button(
         label="Wyłącz",
         style=discord.ButtonStyle.success
     )
