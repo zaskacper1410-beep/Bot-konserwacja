@@ -13,6 +13,10 @@ MAINTENANCE_ROLE_ID = 1539355190707097650
 
 DATA_FILE = "roles_backup.json"
 
+# =========================
+# BOT
+# =========================
+
 intents = discord.Intents.default()
 intents.members = True
 
@@ -21,7 +25,7 @@ tree = app_commands.CommandTree(bot)
 
 
 # =========================
-# ZAPIS / ODCZYT RÓL
+# ZAPIS RÓL
 # =========================
 
 def load_backup():
@@ -41,7 +45,7 @@ def save_backup(data):
 
 
 # =========================
-# SPRAWDZANIE UPRAWNIEŃ
+# SPRAWDZANIE ROLI WŁAŚCICIEL
 # =========================
 
 def has_owner_role(member):
@@ -49,15 +53,17 @@ def has_owner_role(member):
 
 
 # =========================
-# /KONSERWACJA WLACZ
+# KOMENDA
 # =========================
 
 @tree.command(
     name="konserwacja",
-    description="Zarządzanie trybem przerwy konserwacyjnej",
+    description="Zarządzanie przerwą konserwacyjną",
     guild=discord.Object(id=GUILD_ID)
 )
-@app_commands.describe(akcja="Włącz albo wyłącz tryb konserwacji")
+@app_commands.describe(
+    akcja="Wybierz, czy włączyć czy wyłączyć konserwację"
+)
 @app_commands.choices(
     akcja=[
         app_commands.Choice(name="Włącz", value="wlacz"),
@@ -69,23 +75,41 @@ async def konserwacja(
     akcja: app_commands.Choice[str]
 ):
 
-    # TYLKO ROLA WŁAŚCICIEL
-if not isinstance(interaction.user, discord.Member) or not has_owner_role(interaction.user):
+    # =========================
+    # SPRAWDZENIE SERWERA
+    # =========================
+
+    if interaction.guild_id != GUILD_ID:
         await interaction.response.send_message(
-            "❌ Nie masz uprawnień do używania tego bota.",
+            "❌ Ta komenda nie jest dostępna tutaj.",
             ephemeral=True
         )
         return
 
-    # TYLKO NASZ SERWER
-    if interaction.guild_id != GUILD_ID:
+    # =========================
+    # SPRAWDZENIE ROLI
+    # =========================
+
+    if not isinstance(interaction.user, discord.Member):
         await interaction.response.send_message(
-            "❌ Ta komenda nie może być używana na tym serwerze.",
+            "❌ Nie można sprawdzić Twojej roli.",
+            ephemeral=True
+        )
+        return
+
+    if not has_owner_role(interaction.user):
+        await interaction.response.send_message(
+            "❌ Nie masz uprawnień do tej komendy.",
             ephemeral=True
         )
         return
 
     guild = interaction.guild
+
+    # =========================
+    # POBRANIE RÓL
+    # =========================
+
     maintenance_role = guild.get_role(MAINTENANCE_ROLE_ID)
 
     if maintenance_role is None:
@@ -95,8 +119,17 @@ if not isinstance(interaction.user, discord.Member) or not has_owner_role(intera
         )
         return
 
+    if guild.me is None:
+        await interaction.response.send_message(
+            "❌ Nie udało się pobrać informacji o bocie.",
+            ephemeral=True
+        )
+        return
+
+    bot_top_role = guild.me.top_role
+
     # =========================
-    # WŁĄCZANIE
+    # WŁĄCZ KONSERWACJĘ
     # =========================
 
     if akcja.value == "wlacz":
@@ -105,12 +138,14 @@ if not isinstance(interaction.user, discord.Member) or not has_owner_role(intera
 
         if backup:
             await interaction.response.send_message(
-                "⚠️ Konserwacja jest już włączona albo istnieje zapis poprzedniej konserwacji.",
+                "⚠️ Konserwacja jest już włączona.",
                 ephemeral=True
             )
             return
 
         await interaction.response.defer(ephemeral=True)
+
+        saved_members = 0
 
         for member in guild.members:
 
@@ -118,37 +153,61 @@ if not isinstance(interaction.user, discord.Member) or not has_owner_role(intera
             if member.bot:
                 continue
 
-            # Zapamiętujemy role użytkownika
-            role_ids = [
-                role.id
-                for role in member.roles
-                if role != guild.default_role
-                and not role.managed
-                and role < guild.me.top_role
-            ]
+            # Zapamiętujemy wszystkie role,
+            # którymi bot może zarządzać.
+            role_ids = []
+
+            for role in member.roles:
+
+                if role == guild.default_role:
+                    continue
+
+                if role.managed:
+                    continue
+
+                if role.id == MAINTENANCE_ROLE_ID:
+                    continue
+
+                if role >= bot_top_role:
+                    continue
+
+                role_ids.append(role.id)
 
             backup[str(member.id)] = role_ids
 
-            # Usuwamy role, którymi bot może zarządzać
-            removable_roles = [
-                role
-                for role in member.roles
-                if role != guild.default_role
-                and not role.managed
-                and role < guild.me.top_role
-                and role != maintenance_role
-            ]
+            # Usuwamy role, którymi bot może zarządzać,
+            # ale zostawiamy rolę Właściciel.
+            roles_to_remove = []
 
-            if removable_roles:
+            for role in member.roles:
+
+                if role == guild.default_role:
+                    continue
+
+                if role.managed:
+                    continue
+
+                if role.id == MAINTENANCE_ROLE_ID:
+                    continue
+
+                if role.id == OWNER_ROLE_ID:
+                    continue
+
+                if role >= bot_top_role:
+                    continue
+
+                roles_to_remove.append(role)
+
+            if roles_to_remove:
                 try:
                     await member.remove_roles(
-                        *removable_roles,
+                        *roles_to_remove,
                         reason="Włączenie trybu konserwacji"
                     )
                 except discord.Forbidden:
                     pass
 
-            # Nadajemy rolę konserwacyjną
+            # Dodajemy rolę konserwacyjną
             try:
                 if maintenance_role not in member.roles:
                     await member.add_roles(
@@ -158,16 +217,18 @@ if not isinstance(interaction.user, discord.Member) or not has_owner_role(intera
             except discord.Forbidden:
                 pass
 
+            saved_members += 1
+
         save_backup(backup)
 
         await interaction.followup.send(
-            "🔧 **Tryb konserwacji został włączony.**\n"
-            "Role użytkowników zostały zapisane i zastąpione rolą `Przerwa konserwacyjna`.",
+            f"🔧 **Konserwacja włączona.**\n"
+            f"Zapisano role {saved_members} osób.",
             ephemeral=True
         )
 
     # =========================
-    # WYŁĄCZANIE
+    # WYŁĄCZ KONSERWACJĘ
     # =========================
 
     elif akcja.value == "wylacz":
@@ -176,14 +237,14 @@ if not isinstance(interaction.user, discord.Member) or not has_owner_role(intera
 
         if not backup:
             await interaction.response.send_message(
-                "⚠️ Nie znaleziono zapisu poprzednich ról.",
+                "⚠️ Nie znaleziono zapisanych ról.",
                 ephemeral=True
             )
             return
 
         await interaction.response.defer(ephemeral=True)
 
-        restored = 0
+        restored_members = 0
 
         for member_id, role_ids in backup.items():
 
@@ -206,11 +267,19 @@ if not isinstance(interaction.user, discord.Member) or not has_owner_role(intera
             roles_to_restore = []
 
             for role_id in role_ids:
+
                 role = guild.get_role(role_id)
 
-                if role is not None:
-                    if not role.managed and role < guild.me.top_role:
-                        roles_to_restore.append(role)
+                if role is None:
+                    continue
+
+                if role.managed:
+                    continue
+
+                if role >= bot_top_role:
+                    continue
+
+                roles_to_restore.append(role)
 
             if roles_to_restore:
                 try:
@@ -221,31 +290,36 @@ if not isinstance(interaction.user, discord.Member) or not has_owner_role(intera
                 except discord.Forbidden:
                     pass
 
-            restored += 1
+            restored_members += 1
 
-        # Czyścimy zapis
+        # Czyścimy zapis po zakończeniu konserwacji
         save_backup({})
 
         await interaction.followup.send(
-            f"✅ **Tryb konserwacji został wyłączony.**\n"
-            f"Przywrócono role dla {restored} osób.",
+            f"✅ **Konserwacja wyłączona.**\n"
+            f"Przywrócono role {restored_members} osób.",
             ephemeral=True
         )
 
 
 # =========================
-# URUCHOMIENIE BOTA
+# START BOTA
 # =========================
 
 @bot.event
 async def on_ready():
-    await tree.sync(guild=discord.Object(id=GUILD_ID))
+    await tree.sync(
+        guild=discord.Object(id=GUILD_ID)
+    )
+
     print(f"Bot zalogowany jako {bot.user}")
 
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 
 if not TOKEN:
-    raise RuntimeError("Brak zmiennej DISCORD_TOKEN!")
+    raise RuntimeError(
+        "Brak zmiennej DISCORD_TOKEN!"
+    )
 
 bot.run(TOKEN)
