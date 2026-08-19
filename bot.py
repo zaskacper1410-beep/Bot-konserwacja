@@ -14,7 +14,6 @@ from discord.ext import commands
 # =========================================================
 
 GUILD_ID = 1537385203985547364
-
 OWNER_ROLE_ID = 1538951339739193355
 MAINTENANCE_ROLE_ID = 1539355190707097650
 
@@ -98,8 +97,6 @@ bot = commands.Bot(
 )
 
 tree = bot.tree
-
-# Zapobiega uruchomieniu dwóch timerów tego samego giveawayu
 active_timers = set()
 
 
@@ -149,7 +146,6 @@ def get_giveaway(giveaway_id):
     )
 
     result = cursor.fetchone()
-
     connection.close()
 
     return result
@@ -166,7 +162,6 @@ def get_participant_count(giveaway_id):
     """, (giveaway_id,))
 
     result = cursor.fetchone()["count"]
-
     connection.close()
 
     return result
@@ -193,39 +188,22 @@ def get_participants(giveaway_id):
 
 
 def parse_duration(text):
-    """
-    Obsługiwane:
-    30
-    30 min
-    30m
-    1h
-    2h
-    1d
-    """
-
     value = text.lower().strip()
 
     try:
-
         if value.endswith("min"):
-            number = int(value[:-3].strip())
-            return number * 60
+            return int(value[:-3].strip()) * 60
 
         if value.endswith("m"):
-            number = int(value[:-1].strip())
-            return number * 60
+            return int(value[:-1].strip()) * 60
 
         if value.endswith("h"):
-            number = int(value[:-1].strip())
-            return number * 60 * 60
+            return int(value[:-1].strip()) * 60 * 60
 
         if value.endswith("d"):
-            number = int(value[:-1].strip())
-            return number * 60 * 60 * 24
+            return int(value[:-1].strip()) * 60 * 60 * 24
 
-        number = int(value)
-
-        return number * 60
+        return int(value) * 60
 
     except ValueError:
         return None
@@ -241,7 +219,6 @@ def build_giveaway_embed(
     participant_count,
     finished=False
 ):
-
     embed = discord.Embed(
         title=f"🎁 {giveaway['prize']}",
         color=discord.Color.blurple()
@@ -252,15 +229,12 @@ def build_giveaway_embed(
     )
 
     if finished:
-
         embed.add_field(
             name="Skończył się:",
             value=f"<t:{giveaway['finished_at']}:F>",
             inline=True
         )
-
     else:
-
         embed.add_field(
             name="Skończy się za:",
             value=f"<t:{giveaway['ends_at']}:R>",
@@ -279,14 +253,10 @@ def build_giveaway_embed(
         inline=True
     )
 
-    # WAŻNE:
-    # ID NIE JEST JUŻ POKAZYWANE PUBLICZNIE.
-
     if finished:
         embed.set_footer(
             text="Giveaway zakończony"
         )
-
     else:
         embed.set_footer(
             text="Powodzenia! 🎉"
@@ -300,7 +270,105 @@ def build_giveaway_embed(
 
 
 # =========================================================
-# AKTUALIZACJA WIADOMOŚCI GIVEAWAYA
+# PRZYCISK GIVEAWAYA
+# =========================================================
+
+class GiveawayJoinButton(discord.ui.Button):
+
+    def __init__(self, giveaway_id):
+        super().__init__(
+            label="🎉 Weź udział",
+            style=discord.ButtonStyle.primary,
+            custom_id=f"giveaway_join_{giveaway_id}"
+        )
+
+        self.giveaway_id = giveaway_id
+
+    async def callback(self, interaction):
+
+        giveaway = get_giveaway(self.giveaway_id)
+
+        if giveaway is None:
+            await interaction.response.send_message(
+                "❌ Ten giveaway nie istnieje.",
+                ephemeral=True
+            )
+            return
+
+        if giveaway["finished"]:
+            await interaction.response.send_message(
+                "❌ Ten giveaway już się zakończył.",
+                ephemeral=True
+            )
+            return
+
+        if now_timestamp() >= giveaway["ends_at"]:
+            await interaction.response.send_message(
+                "❌ Ten giveaway właśnie się zakończył.",
+                ephemeral=True
+            )
+            return
+
+        connection = db()
+        cursor = connection.cursor()
+
+        cursor.execute("""
+            SELECT 1
+            FROM participants
+            WHERE giveaway_id = ?
+            AND user_id = ?
+        """, (
+            self.giveaway_id,
+            interaction.user.id
+        ))
+
+        if cursor.fetchone():
+            connection.close()
+
+            await interaction.response.send_message(
+                "ℹ️ Już bierzesz udział w tym giveawayu.",
+                ephemeral=True
+            )
+            return
+
+        cursor.execute("""
+            INSERT INTO participants (
+                giveaway_id,
+                user_id
+            )
+            VALUES (?, ?)
+        """, (
+            self.giveaway_id,
+            interaction.user.id
+        ))
+
+        connection.commit()
+        connection.close()
+
+        await interaction.response.send_message(
+            "✅ **Pomyślnie wziąłeś udział w losowaniu!**",
+            ephemeral=True
+        )
+
+        await update_giveaway_message(
+            self.giveaway_id
+        )
+
+
+class GiveawayJoinView(discord.ui.View):
+
+    def __init__(self, giveaway_id):
+        super().__init__(
+            timeout=None
+        )
+
+        self.add_item(
+            GiveawayJoinButton(giveaway_id)
+        )
+
+
+# =========================================================
+# AKTUALIZACJA GIVEAWAYA
 # =========================================================
 
 async def update_giveaway_message(giveaway_id):
@@ -364,146 +432,24 @@ async def update_giveaway_message(giveaway_id):
         view.add_item(button)
 
     else:
-
         view = GiveawayJoinView(
             giveaway_id
         )
 
     try:
-
-        # KLUCZOWA RZECZ:
-        # zachowujemy istniejący załącznik,
-        # dzięki czemu baner nie znika.
-
         await message.edit(
             embed=embed,
             view=view,
             attachments=message.attachments
         )
-
     except Exception as error:
-
         print(
             f"Błąd aktualizacji giveawayu {giveaway_id}: {error}"
         )
 
 
 # =========================================================
-# PRZYCISK WEŹ UDZIAŁ
-# =========================================================
-
-class GiveawayJoinButton(discord.ui.Button):
-
-    def __init__(self, giveaway_id):
-
-        super().__init__(
-            label="🎉 Weź udział",
-            style=discord.ButtonStyle.primary,
-            custom_id=f"giveaway_join_{giveaway_id}"
-        )
-
-        self.giveaway_id = giveaway_id
-
-    async def callback(self, interaction):
-
-        giveaway = get_giveaway(
-            self.giveaway_id
-        )
-
-        if giveaway is None:
-
-            await interaction.response.send_message(
-                "❌ Ten giveaway nie istnieje.",
-                ephemeral=True
-            )
-
-            return
-
-        if giveaway["finished"]:
-
-            await interaction.response.send_message(
-                "❌ Ten giveaway już się zakończył.",
-                ephemeral=True
-            )
-
-            return
-
-        if now_timestamp() >= giveaway["ends_at"]:
-
-            await interaction.response.send_message(
-                "❌ Ten giveaway właśnie się zakończył.",
-                ephemeral=True
-            )
-
-            return
-
-        connection = db()
-        cursor = connection.cursor()
-
-        cursor.execute("""
-            SELECT 1
-            FROM participants
-            WHERE giveaway_id = ?
-            AND user_id = ?
-        """, (
-            self.giveaway_id,
-            interaction.user.id
-        ))
-
-        already_joined = cursor.fetchone()
-
-        if already_joined:
-
-            connection.close()
-
-            await interaction.response.send_message(
-                "ℹ️ Już bierzesz udział w tym giveawayu.",
-                ephemeral=True
-            )
-
-            return
-
-        cursor.execute("""
-            INSERT INTO participants (
-                giveaway_id,
-                user_id
-            )
-            VALUES (?, ?)
-        """, (
-            self.giveaway_id,
-            interaction.user.id
-        ))
-
-        connection.commit()
-        connection.close()
-
-        await interaction.response.send_message(
-            "✅ **Pomyślnie wziąłeś udział w losowaniu!**",
-            ephemeral=True
-        )
-
-        await update_giveaway_message(
-            self.giveaway_id
-        )
-
-
-class GiveawayJoinView(discord.ui.View):
-
-    def __init__(self, giveaway_id):
-
-        super().__init__(
-            timeout=None
-        )
-
-        self.add_item(
-            GiveawayJoinButton(
-                giveaway_id
-            )
-        )
-
-
-# =========================================================
-# MODAL TWORZENIA GIVEAWAYA
+# MODAL TWORZENIA
 # =========================================================
 
 class GiveawayModal(discord.ui.Modal):
@@ -541,56 +487,44 @@ class GiveawayModal(discord.ui.Modal):
         )
 
         if duration is None:
-
             await interaction.response.send_message(
-                "❌ Nieprawidłowy czas.\n"
-                "Przykład: `30 min`",
+                "❌ Nieprawidłowy czas. Przykład: `30 min`",
                 ephemeral=True
             )
-
             return
 
         if duration < 30 * 60:
-
             await interaction.response.send_message(
                 "❌ Giveaway musi trwać minimum **30 minut**.",
                 ephemeral=True
             )
-
             return
 
         try:
             winners = int(
                 self.zwyciezcy.value.strip()
             )
-
         except ValueError:
-
             await interaction.response.send_message(
                 "❌ Liczba zwycięzców musi być liczbą.",
                 ephemeral=True
             )
-
             return
 
         if winners < 1:
-
             await interaction.response.send_message(
                 "❌ Liczba zwycięzców musi wynosić minimum **1**.",
                 ephemeral=True
             )
-
             return
 
         prize = self.nagroda.value.strip()
 
         if not prize:
-
             await interaction.response.send_message(
                 "❌ Musisz wpisać nagrodę.",
                 ephemeral=True
             )
-
             return
 
         await interaction.response.send_message(
@@ -629,7 +563,10 @@ class GiveawayRoleSelect(discord.ui.RoleSelect):
         self.prize = prize
         self.creator_id = creator_id
 
-    async def callback(self, interaction: discord.Interaction):
+    async def callback(
+        self,
+        interaction: discord.Interaction
+    ):
 
         if interaction.user.id != self.creator_id:
             await interaction.response.send_message(
@@ -638,7 +575,9 @@ class GiveawayRoleSelect(discord.ui.RoleSelect):
             )
             return
 
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(
+            ephemeral=True
+        )
 
         role = self.values[0]
 
@@ -704,7 +643,9 @@ class GiveawayRoleSelect(discord.ui.RoleSelect):
         connection.commit()
         connection.close()
 
-        giveaway = get_giveaway(giveaway_id)
+        giveaway = get_giveaway(
+            giveaway_id
+        )
 
         embed = build_giveaway_embed(
             giveaway,
@@ -713,7 +654,9 @@ class GiveawayRoleSelect(discord.ui.RoleSelect):
             False
         )
 
-        view = GiveawayJoinView(giveaway_id)
+        view = GiveawayJoinView(
+            giveaway_id
+        )
 
         allowed_mentions = discord.AllowedMentions(
             roles=True
@@ -761,13 +704,20 @@ class GiveawayRoleSelect(discord.ui.RoleSelect):
         connection.close()
 
         await interaction.edit_original_response(
-            content="✅ **Giveaway został utworzony!**",
+            content=(
+                "✅ **Giveaway został utworzony!**\n"
+                f"🆔 ID to **{giveaway_id}**"
+            ),
             view=None
         )
 
         asyncio.create_task(
             giveaway_timer(giveaway_id)
         )
+
+
+class RoleSelectView(discord.ui.View):
+
     def __init__(
         self,
         duration,
@@ -775,7 +725,6 @@ class GiveawayRoleSelect(discord.ui.RoleSelect):
         prize,
         creator_id
     ):
-
         super().__init__(
             timeout=120
         )
@@ -900,72 +849,51 @@ async def finish_giveaway(giveaway_id):
     connection.commit()
     connection.close()
 
-    # -----------------------------------------------------
-    # AKTUALIZUJEMY GIVEAWAY
-    # -----------------------------------------------------
-
     await update_giveaway_message(
         giveaway_id
     )
-
-    # -----------------------------------------------------
-    # POBIERAMY UCZESTNIKÓW
-    # -----------------------------------------------------
 
     participants = get_participants(
         giveaway_id
     )
 
-    # -----------------------------------------------------
-    # WIADOMOŚĆ „CZY JESTEŚCIE GOTOWI”
-    # -----------------------------------------------------
+    # =====================================================
+    # WIADOMOŚĆ + ODLICZANIE 60 SEKUND
+    # =====================================================
+
+    countdown_end = now_timestamp() + 60
 
     allowed_mentions = discord.AllowedMentions(
         roles=True
     )
 
-   countdown_end = now_timestamp() + 60
-
-announcement = await channel.send(
-    content=(
-        f"{role.mention} **Czy jesteście gotowi na wyniki???**\n"
-        f"⏳ Wyniki za: <t:{countdown_end}:R>"
-    ),
-    allowed_mentions=discord.AllowedMentions(
-        roles=[role]
+    announcement = await channel.send(
+        content=(
+            f"{role.mention} **Czy jesteście gotowi na wyniki???**\n"
+            f"⏳ Wyniki za: <t:{countdown_end}:R>"
+        ),
+        allowed_mentions=allowed_mentions
     )
-)
 
     try:
-
         await announcement.add_reaction(
             "🔥"
         )
-
     except Exception as error:
-
         print(
             f"Nie udało się dodać reakcji: {error}"
         )
 
-    # -----------------------------------------------------
-    # CZEKAMY MINUTĘ
-    # -----------------------------------------------------
-
-    await asyncio.sleep(
-        60
-    )
+    await asyncio.sleep(60)
 
     try:
-
         await announcement.delete()
-
     except Exception:
         pass
 
-    # -----------------------------------------------------
+    # =====================================================
     # BRAK UCZESTNIKÓW
-    # -----------------------------------------------------
+    # =====================================================
 
     if not participants:
 
@@ -983,9 +911,9 @@ announcement = await channel.send(
 
         return
 
-    # -----------------------------------------------------
+    # =====================================================
     # LOSOWANIE
-    # -----------------------------------------------------
+    # =====================================================
 
     winners_count = min(
         giveaway["winners_count"],
@@ -1002,14 +930,15 @@ announcement = await channel.send(
         for user_id in winners
     )
 
-    # -----------------------------------------------------
+    # =====================================================
     # WYNIK
-    # -----------------------------------------------------
+    # =====================================================
 
     result_embed = discord.Embed(
         title=f"🏆 {giveaway['prize']}",
         description=(
-            f"**Wygrywa:** {winner_mentions}\n\n"
+            f"**{giveaway['prize']}** wygrywa "
+            f"{winner_mentions}\n\n"
             "Gratulacje! Zgłoś się na ticket! 🎉"
         ),
         color=discord.Color.blurple()
@@ -1021,7 +950,7 @@ announcement = await channel.send(
 
 
 # =========================================================
-# MODAL ZAKOŃCZENIA GIVEAWAYA
+# MODAL ZAKOŃCZENIA
 # =========================================================
 
 class EndGiveawayModal(discord.ui.Modal):
@@ -1041,18 +970,15 @@ class EndGiveawayModal(discord.ui.Modal):
     async def on_submit(self, interaction):
 
         try:
-
             giveaway_id = int(
                 self.giveaway_id.value.strip()
             )
-
         except ValueError:
 
             await interaction.response.send_message(
                 "❌ ID musi być liczbą.",
                 ephemeral=True
             )
-
             return
 
         giveaway = get_giveaway(
@@ -1065,7 +991,6 @@ class EndGiveawayModal(discord.ui.Modal):
                 f"❌ Giveaway o ID **{giveaway_id}** nie istnieje.",
                 ephemeral=True
             )
-
             return
 
         if giveaway["finished"]:
@@ -1074,7 +999,6 @@ class EndGiveawayModal(discord.ui.Modal):
                 f"ℹ️ Giveaway **#{giveaway_id}** już jest zakończony.",
                 ephemeral=True
             )
-
             return
 
         await interaction.response.send_message(
@@ -1118,7 +1042,7 @@ async def giveaway_utworz(
 
 @giveaway_group.command(
     name="zakoncz",
-    description="Otwiera okno zakończenia giveawayu"
+    description="Kończy giveaway przed czasem"
 )
 async def giveaway_zakoncz(
     interaction: discord.Interaction
@@ -1150,10 +1074,6 @@ id_group = app_commands.Group(
 )
 
 
-# =========================================================
-# /ID GIVEAWAY
-# =========================================================
-
 @id_group.command(
     name="giveaway",
     description="Pokazuje ID aktywnego lub ostatniego giveawayu"
@@ -1170,7 +1090,6 @@ async def id_giveaway(
     connection = db()
     cursor = connection.cursor()
 
-    # Najpierw szukamy aktywnego giveawayu
     cursor.execute("""
         SELECT *
         FROM giveaways
@@ -1184,7 +1103,6 @@ async def id_giveaway(
 
     giveaway = cursor.fetchone()
 
-    # Jeśli nie ma aktywnego, pokazujemy ostatni
     if giveaway is None:
 
         cursor.execute("""
@@ -1207,16 +1125,13 @@ async def id_giveaway(
             "ℹ️ Nie ma jeszcze żadnego giveawayu.",
             ephemeral=True
         )
-
         return
 
-    if giveaway["finished"]:
-
-        status = "ostatni zakończony giveaway"
-
-    else:
-
-        status = "aktywny giveaway"
+    status = (
+        "ostatni zakończony giveaway"
+        if giveaway["finished"]
+        else "aktywny giveaway"
+    )
 
     await interaction.response.send_message(
         f"🆔 **ID to - {giveaway['id']} -**\n"
@@ -1224,10 +1139,6 @@ async def id_giveaway(
         ephemeral=True
     )
 
-
-# =========================================================
-# /ID STATYSTYKI
-# =========================================================
 
 @id_group.command(
     name="statystyki",
@@ -1256,7 +1167,6 @@ async def id_statystyki(
             f"❌ Giveaway o ID **{id}** nie istnieje.",
             ephemeral=True
         )
-
         return
 
     guild = interaction.guild
@@ -1390,7 +1300,6 @@ class MaintenanceView(discord.ui.View):
                 "❌ Nie znaleziono roli Przerwa konserwacyjna.",
                 ephemeral=True
             )
-
             return
 
         connection = db()
@@ -1412,7 +1321,6 @@ class MaintenanceView(discord.ui.View):
                 "⚠️ Konserwacja jest już włączona.",
                 ephemeral=True
             )
-
             return
 
         if guild.me is None:
@@ -1421,7 +1329,6 @@ class MaintenanceView(discord.ui.View):
             return
 
         bot_top_role = guild.me.top_role
-
         saved = 0
 
         for member in guild.members:
@@ -1468,12 +1375,10 @@ class MaintenanceView(discord.ui.View):
             if roles_to_remove:
 
                 try:
-
                     await member.remove_roles(
                         *roles_to_remove,
                         reason="Włączenie przerwy konserwacyjnej"
                     )
-
                 except discord.Forbidden:
                     pass
 
@@ -1545,7 +1450,6 @@ class MaintenanceView(discord.ui.View):
                 "⚠️ Nie znaleziono zapisanych ról.",
                 ephemeral=True
             )
-
             return
 
         if guild.me is None:
@@ -1554,7 +1458,6 @@ class MaintenanceView(discord.ui.View):
             return
 
         bot_top_role = guild.me.top_role
-
         restored_users = set()
 
         for row in rows:
@@ -1567,10 +1470,7 @@ class MaintenanceView(discord.ui.View):
                 row["role_id"]
             )
 
-            if member is None:
-                continue
-
-            if role is None:
+            if member is None or role is None:
                 continue
 
             if role.managed:
@@ -1601,10 +1501,7 @@ class MaintenanceView(discord.ui.View):
                 member_id
             )
 
-            if member is None:
-                continue
-
-            if maintenance_role is None:
+            if member is None or maintenance_role is None:
                 continue
 
             try:
@@ -1663,7 +1560,7 @@ async def maintenance_command(
 
 
 # =========================================================
-# GOTOWE GIVEAWAYY PO RESTARCIE
+# START BOTA
 # =========================================================
 
 @bot.event
@@ -1694,10 +1591,6 @@ async def on_ready():
     print(
         f"Bot zalogowany jako {bot.user}"
     )
-
-    # -----------------------------------------------------
-    # ODNAWIANIE TIMERÓW
-    # -----------------------------------------------------
 
     connection = db()
     cursor = connection.cursor()
