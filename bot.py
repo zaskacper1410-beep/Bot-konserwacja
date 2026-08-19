@@ -8,7 +8,7 @@ from discord import app_commands
 # =========================
 
 GUILD_ID = 1537385203985547364
-OWNER_ID = 862080420005937218
+OWNER_ROLE_ID = 1538951339739193355
 MAINTENANCE_ROLE_ID = 1539355190707097650
 
 DATA_FILE = "roles_backup.json"
@@ -44,8 +44,8 @@ def save_backup(data):
 # SPRAWDZANIE UPRAWNIEŃ
 # =========================
 
-def is_owner(user_id):
-    return user_id == OWNER_ID
+def has_owner_role(member):
+    return any(role.id == OWNER_ROLE_ID for role in member.roles)
 
 
 # =========================
@@ -69,8 +69,8 @@ async def konserwacja(
     akcja: app_commands.Choice[str]
 ):
 
-    # TYLKO TY
-    if not is_owner(interaction.user.id):
+    # TYLKO ROLA WŁAŚCICIEL
+if not isinstance(interaction.user, discord.Member) or not has_owner_role(interaction.user):
         await interaction.response.send_message(
             "❌ Nie masz uprawnień do używania tego bota.",
             ephemeral=True
