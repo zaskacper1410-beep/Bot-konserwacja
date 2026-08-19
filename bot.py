@@ -618,7 +618,6 @@ class GiveawayRoleSelect(discord.ui.RoleSelect):
         prize,
         creator_id
     ):
-
         super().__init__(
             placeholder="Wybierz rolę do oznaczenia...",
             min_values=1,
@@ -630,41 +629,41 @@ class GiveawayRoleSelect(discord.ui.RoleSelect):
         self.prize = prize
         self.creator_id = creator_id
 
-    await interaction.response.defer(ephemeral=True)
+    async def callback(self, interaction: discord.Interaction):
 
         if interaction.user.id != self.creator_id:
-
             await interaction.response.send_message(
                 "❌ To nie jest Twój formularz.",
                 ephemeral=True
             )
-
             return
+
+        await interaction.response.defer(ephemeral=True)
 
         role = self.values[0]
 
         if role.is_default():
-
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ Nie możesz wybrać `@everyone`.",
                 ephemeral=True
             )
-
             return
 
         if role.managed:
-
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ Nie możesz wybrać zarządzanej roli.",
                 ephemeral=True
             )
-
             return
 
         guild = interaction.guild
         channel = interaction.channel
 
         if guild is None or channel is None:
+            await interaction.followup.send(
+                "❌ Nie udało się znaleźć serwera lub kanału.",
+                ephemeral=True
+            )
             return
 
         created_at = now_timestamp()
@@ -705,9 +704,7 @@ class GiveawayRoleSelect(discord.ui.RoleSelect):
         connection.commit()
         connection.close()
 
-        giveaway = get_giveaway(
-            giveaway_id
-        )
+        giveaway = get_giveaway(giveaway_id)
 
         embed = build_giveaway_embed(
             giveaway,
@@ -716,9 +713,7 @@ class GiveawayRoleSelect(discord.ui.RoleSelect):
             False
         )
 
-        view = GiveawayJoinView(
-            giveaway_id
-        )
+        view = GiveawayJoinView(giveaway_id)
 
         allowed_mentions = discord.AllowedMentions(
             roles=True
@@ -741,7 +736,6 @@ class GiveawayRoleSelect(discord.ui.RoleSelect):
 
         else:
 
-            # Awaryjnie, jeśli obrazka nie ma
             embed.remove_image()
 
             message = await channel.send(
@@ -767,18 +761,13 @@ class GiveawayRoleSelect(discord.ui.RoleSelect):
         connection.close()
 
         await interaction.edit_original_response(
-    content="✅ **Giveaway został utworzony!**",
-    view=None
-)
-        asyncio.create_task(
-            giveaway_timer(
-                giveaway_id
-            )
+            content="✅ **Giveaway został utworzony!**",
+            view=None
         )
 
-
-class RoleSelectView(discord.ui.View):
-
+        asyncio.create_task(
+            giveaway_timer(giveaway_id)
+        )
     def __init__(
         self,
         duration,
