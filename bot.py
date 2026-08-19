@@ -630,7 +630,7 @@ class GiveawayRoleSelect(discord.ui.RoleSelect):
         self.prize = prize
         self.creator_id = creator_id
 
-    async def callback(self, interaction):
+    await interaction.response.defer(ephemeral=True)
 
         if interaction.user.id != self.creator_id:
 
@@ -766,14 +766,10 @@ class GiveawayRoleSelect(discord.ui.RoleSelect):
         connection.commit()
         connection.close()
 
-        await interaction.response.edit_message(
-            content=(
-                "✅ **Giveaway został utworzony!**\n"
-                f"ID to **{giveaway_id}**"
-            ),
-            view=None
-        )
-
+        await interaction.edit_original_response(
+    content="✅ **Giveaway został utworzony!**",
+    view=None
+)
         asyncio.create_task(
             giveaway_timer(
                 giveaway_id
@@ -939,12 +935,17 @@ async def finish_giveaway(giveaway_id):
         roles=True
     )
 
-    announcement = await channel.send(
-        content=(
-            f"{role.mention} **Czy jesteście gotowi na wyniki???**"
-        ),
-        allowed_mentions=allowed_mentions
+   countdown_end = now_timestamp() + 60
+
+announcement = await channel.send(
+    content=(
+        f"{role.mention} **Czy jesteście gotowi na wyniki???**\n"
+        f"⏳ Wyniki za: <t:{countdown_end}:R>"
+    ),
+    allowed_mentions=discord.AllowedMentions(
+        roles=[role]
     )
+)
 
     try:
 
